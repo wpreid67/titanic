@@ -27,6 +27,11 @@ mask = df['TitleFull'].isin(died_titles) & df['Prediction'].isna()
 df.loc[mask, 'Prediction'] = 0
 df.loc[mask, 'Rule'] = 'Rule 2 - Title guarantees death'
 
+# ---- RULE 2b: Fare = 0 = crew/company = died ----
+mask = (df['Fare'] == 0) & df['Prediction'].isna()
+df.loc[mask, 'Prediction'] = 0
+df.loc[mask, 'Rule'] = 'Rule 2b - Fare zero died'
+
 # ---- RULE 3: Large family + 3rd class = died ----
 mask = (df['FamilySize'] >= 5) & (df['Pclass'] == 3) & df['Prediction'].isna()
 df.loc[mask, 'Prediction'] = 0
@@ -56,6 +61,11 @@ df.loc[mask, 'Rule'] = 'Rule 7 - Male not in small family'
 mask = (df['Sex'] == 'male') & (~df['HasCabin']) & df['Prediction'].isna()
 df.loc[mask, 'Prediction'] = 0
 df.loc[mask, 'Rule'] = 'Rule 8 - Male no cabin'
+
+# ---- RULE 9: Everyone else → DIED ----
+mask = df['Prediction'].isna()
+df.loc[mask, 'Prediction'] = 0
+df.loc[mask, 'Rule'] = 'Rule 9 - Untagged default died'
 
 # ---- RESULTS ----
 print("=== PREDICTIONS BY RULE ===")
@@ -99,3 +109,62 @@ print("=== CHECKING MISSED CHILDREN ===")
 missed = df[df['Name'].str.contains('Dodge|Allison|Carter, Master')]
 print(missed[['Name', 'Age', 'TitleFull', 'FamilySize', 'Pclass', 'Rule', 'Prediction', 'Survived']].to_string())
 
+# ---- FAMILY SIZE BREAKDOWN IN HARD GROUP ----
+print("=== UNTAGGED MALES - SURVIVAL BY FAMILY SIZE ===")
+untagged_males = df[(df['Prediction'].isna()) & (df['Sex'] == 'male')]
+print(untagged_males.groupby('FamilySize')['Survived'].agg(['mean', 'count']).round(2))
+
+# ---- APPLY TO COMPETITION DATA ----
+import kagglehub
+
+test = pd.read_csv(path + '/test.csv')
+
+# Same feature engineering
+test['TitleFull'] = test['Name'].str.extract(r',\s*([^\.]+)\.')
+test['FamilySize'] = test['SibSp'] + test['Parch'] + 1
+test['HasCabin'] = test['Cabin'].notna()
+test['Age'] = test['Age'].fillna(test['Age'].median())
+test['AgeGroup'] = test['Age'].apply(lambda x: 'Child' if x < 12 else 'Adult')
+test['Prediction'] = None
+
+# Apply all rules
+mask = test['TitleFull'].isin(['Lady','the Countess','Mlle','Sir','Ms','Mme']) 
+test.loc[mask, 'Prediction'] = 1
+
+mask = test['TitleFull'].isin(['Capt','Rev']) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 0
+
+mask = (test['Fare'] == 0) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 0
+
+mask = (test['FamilySize'] >= 5) & (test['Pclass'] == 3) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 0
+
+mask = (test['Sex'] == 'female') & (test['FamilySize'].between(2,4)) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 1
+
+mask = (test['Sex'] == 'female') & (test['FamilySize'] == 1) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 1
+
+mask = (test['Sex'] == 'male') & (test['AgeGroup'] == 'Child') & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 1
+
+mask = (test['Sex'] == 'male') & (~test['FamilySize'].between(2,4)) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 0
+
+mask = (test['Sex'] == 'male') & (~test['HasCabin']) & test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 0
+
+mask = test['Prediction'].isna()
+test.loc[mask, 'Prediction'] = 0
+
+# Save submission
+submission = test[['PassengerId', 'Prediction']].rename(columns={'Prediction': 'Survived'})
+submission['Survived'] = submission['Survived'].astype(int)
+submission.to_csv('submission_rules.csv', index=False)
+
+print("=== COMPETITION SUBMISSION ===")
+print("Total predictions:", len(submission))
+print("Predicted survived:", submission['Survived'].sum())
+print("Predicted died:", (submission['Survived']==0).sum())
+print("Saved to submission_rules.csv")
